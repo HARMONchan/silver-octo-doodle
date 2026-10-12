@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>单摆物理模拟器 - 人机协同程序设计</title>
+  <style>
+    :root {
+      --bg: #1a1a24;
+      --panel: #23232f;
+      --text: #e6e6f0;
+      --muted: #9a9ab0;
+      --accent: #6c8cff;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      margin-bottom: 4px;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 20px;
+    }
+    canvas {
+      display: block;
+      border-radius: 12px;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+      background: var(--bg);
+    }
+  </style>
+</head>
+<body>
+  <h1>单摆物理模拟器</h1>
+  <div class="subtitle">意图驱动 · ReAct 闭环 · 单文件自包含</div>
+
+  <canvas id="canvas" width="640" height="420"></canvas>
+
+  <script>
+    (function () {
+      "use strict";
+
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      const PIVOT_X = canvas.width / 2;
+      const PIVOT_Y = 60;
+      const BALL_RADIUS = 18;
+      const INITIAL_ANGLE = (45 * Math.PI) / 180;
+
+      const length = 200;    // 摆长（像素）
+      const gravity = 9.8;   // 重力加速度
+      const damping = 0.001; // 空气阻尼系数
+
+      let theta = INITIAL_ANGLE;
+      let omega = 0;
+
+      function computeAlpha() {
+        return -(gravity / length) * Math.sin(theta) - damping * omega;
+      }
+
+      function step(dt) {
+        const alpha = computeAlpha();
+        omega += alpha * dt;
+        theta += omega * dt;
+      }
+
+      function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const ballX = PIVOT_X + length * Math.sin(theta);
+        const ballY = PIVOT_Y + length * Math.cos(theta);
+
+        ctx.fillStyle = "#4a4a5c";
+        ctx.beginPath();
+        ctx.arc(PIVOT_X, PIVOT_Y, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "#6c8cff";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(PIVOT_X, PIVOT_Y);
+        ctx.lineTo(ballX, ballY);
+        ctx.stroke();
+
+        const glow = ctx.createRadialGradient(ballX, ballY, 2, ballX, ballY, BALL_RADIUS * 2.5);
+        glow.addColorStop(0, "rgba(108, 140, 255, 0.45)");
+        glow.addColorStop(1, "rgba(108, 140, 255, 0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(ballX, ballY, BALL_RADIUS * 2.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#e6e6f0";
+        ctx.beginPath();
+        ctx.arc(ballX, ballY, BALL_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      let lastTime = performance.now();
+
+      function animate(now) {
+        const dt = Math.min((now - lastTime) / 1000, 0.05);
+        lastTime = now;
+
+        for (let i = 0; i < 4; i++) {
+          step(dt / 4);
+        }
+
+        draw();
+        requestAnimationFrame(animate);
+      }
+
+      requestAnimationFrame(animate);
+    })();
+  </script>
+</body>
+</html>
