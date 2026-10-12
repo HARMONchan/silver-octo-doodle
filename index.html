@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>单摆物理模拟器 - 人机协同程序设计</title>
+  <title>单摆 / 双摆混沌物理模拟器 - 人机协同程序设计</title>
   <style>
     :root {
       --bg: #1a1a24;
@@ -33,13 +33,37 @@
     .subtitle {
       font-size: 13px;
       color: var(--muted);
-      margin-bottom: 20px;
+      margin-bottom: 16px;
+    }
+    .mode-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .mode-btn {
+      padding: 8px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      color: var(--muted);
+      background: var(--panel);
+      border: 1px solid #3a3a4c;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .mode-btn.active {
+      color: #fff;
+      background: var(--accent);
+      border-color: var(--accent);
     }
     canvas {
       display: block;
       border-radius: 12px;
       box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
       background: var(--bg);
+      cursor: crosshair;
+      touch-action: none;
     }
     .panel {
       width: 640px;
@@ -71,6 +95,14 @@
       font-variant-numeric: tabular-nums;
       color: var(--accent);
     }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      text-align: center;
+      margin-bottom: 12px;
+      display: none;
+    }
+    .hint.show { display: block; }
     button {
       width: 100%;
       padding: 12px;
@@ -89,12 +121,20 @@
   </style>
 </head>
 <body>
-  <h1>单摆物理模拟器</h1>
+  <h1>单摆 / 双摆混沌物理模拟器</h1>
   <div class="subtitle">意图驱动 · ReAct 闭环 · 单文件自包含</div>
+
+  <div class="mode-bar">
+    <button class="mode-btn active" id="modeSingle">单摆模式</button>
+    <button class="mode-btn" id="modeDouble">双摆混沌</button>
+  </div>
 
   <canvas id="canvas" width="640" height="420"></canvas>
 
   <div class="panel">
+    <div class="hint show" id="singleHint">拖动滑块实时调节物理参数</div>
+    <div class="hint" id="doubleHint">🖱️ 拖拽第二摆球改变初始角度后释放，观察混沌运动</div>
+
     <div class="slider-row">
       <label>摆长 L</label>
       <input type="range" id="length" min="100" max="350" value="200" step="1">
@@ -105,7 +145,7 @@
       <input type="range" id="gravity" min="1" max="25" value="9.8" step="0.1">
       <span class="value" id="gravityVal">9.8</span>
     </div>
-    <div class="slider-row">
+    <div class="slider-row" id="dampingRow">
       <label>阻尼 k</label>
       <input type="range" id="damping" min="0" max="0.010" value="0.001" step="0.0001">
       <span class="value" id="dampingVal">0.0010</span>
@@ -117,6 +157,7 @@
     (function () {
       "use strict";
 
+      // ===== DOM 元素 =====
       const canvas = document.getElementById("canvas");
       const ctx = canvas.getContext("2d");
       const lengthInput = document.getElementById("length");
@@ -126,39 +167,118 @@
       const gravityVal = document.getElementById("gravityVal");
       const dampingVal = document.getElementById("dampingVal");
       const resetBtn = document.getElementById("resetBtn");
+      const modeSingle = document.getElementById("modeSingle");
+      const modeDouble = document.getElementById("modeDouble");
+      const singleHint = document.getElementById("singleHint");
+      const doubleHint = document.getElementById("doubleHint");
+      const dampingRow = document.getElementById("dampingRow");
 
+      // ===== 物理参数 =====
       const PIVOT_X = canvas.width / 2;
       const PIVOT_Y = 60;
-      const BALL_RADIUS = 18;
+      const BALL_RADIUS = 14;
       const INITIAL_ANGLE = (45 * Math.PI) / 180;
+      const M1 = 1, M2 = 1; // 双摆两质量（归一化）
 
       let length = parseFloat(lengthInput.value);
       let gravity = parseFloat(gravityInput.value);
       let damping = parseFloat(dampingInput.value);
 
+      // 当前模式
+      let mode = "single"; // "single" | "double"
+
+      // ===== 单摆状态 =====
       let theta = INITIAL_ANGLE;
       let omega = 0;
 
+      // ===== 双摆状态（角度/角速度：θ1, ω1, θ2, ω2）=====
+      let dTheta1 = INITIAL_ANGLE, dOmega1 = 0;
+      let dTheta2 = INITIAL_ANGLE, dOmega2 = 0;
+
+      // ===== 双摆 RK4 求解 =====
+      // 双摆微分方程（m1=m2=1, L1=L2=L）：
+      //   θ1'' = (-g(2 sinθ1 + sin(θ1-2θ2)) - 2 sin(θ1-θ2)(ω2² + ω1² cos(θ1-θ2))) / (L(2 - cos(2θ1-2θ2)))
+      //   θ2'' = (2 sin(θ1-θ2)(2 ω1² L + 2 g cosθ1 + ω2² L cos(θ1-θ2))) / (L(2 - cos(2θ1-2θ2)))
+      // 状态向量 y = [θ1, ω1, θ2, ω2]
+      function doublePendulumDeriv(y) {
+        const t1 = y[0], w1 = y[1], t2 = y[2], w2 = y[3];
+        const d = t1 - t2;
+        const den = 2 - Math.cos(2 * d);
+
+        const dt1 = w1;
+        const dw1 = (-gravity * (2 * Math.sin(t1) + Math.sin(t1 - 2 * t2))
+                      - 2 * Math.sin(d) * (w2 * w2 + w1 * w1 * Math.cos(d)))
+                      / (length * den);
+        const dt2 = w2;
+        const dw2 = (2 * Math.sin(d) * (2 * w1 * w1 * length
+                      + 2 * gravity * Math.cos(t1)
+                      + w2 * w2 * length * Math.cos(d)))
+                      / (length * den);
+
+        return [dt1, dw1, dt2, dw2];
+      }
+
+      // Runge-Kutta 4 阶积分一步
+      function rk4Step(y, dt) {
+        const k1 = doublePendulumDeriv(y);
+        const y2 = [y[0] + k1[0] * dt / 2, y[1] + k1[1] * dt / 2,
+                    y[2] + k1[2] * dt / 2, y[3] + k1[3] * dt / 2];
+        const k2 = doublePendulumDeriv(y2);
+        const y3 = [y[0] + k2[0] * dt / 2, y[1] + k2[1] * dt / 2,
+                    y[2] + k2[2] * dt / 2, y[3] + k2[3] * dt / 2];
+        const k3 = doublePendulumDeriv(y3);
+        const y4 = [y[0] + k3[0] * dt, y[1] + k3[1] * dt,
+                    y[2] + k3[2] * dt, y[3] + k3[3] * dt];
+        const k4 = doublePendulumDeriv(y4);
+
+        return [
+          y[0] + (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]) * dt / 6,
+          y[1] + (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]) * dt / 6,
+          y[2] + (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]) * dt / 6,
+          y[3] + (k1[3] + 2 * k2[3] + 2 * k3[3] + k4[3]) * dt / 6
+        ];
+      }
+
+      // ===== 单摆求解 =====
       function computeAlpha() {
         return -(gravity / length) * Math.sin(theta) - damping * omega;
       }
-
-      function step(dt) {
+      function singleStep(dt) {
         const alpha = computeAlpha();
         omega += alpha * dt;
         theta += omega * dt;
       }
 
-      function draw() {
+      // ===== 渲染 =====
+      function drawBall(x, y, r, glowColor, fillColor) {
+        const glow = ctx.createRadialGradient(x, y, 2, x, y, r * 2.5);
+        glow.addColorStop(0, glowColor);
+        glow.addColorStop(1, "rgba(108, 140, 255, 0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(x, y, r * 2.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = fillColor;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      function drawPivot() {
+        ctx.fillStyle = "#4a4a5c";
+        ctx.beginPath();
+        ctx.arc(PIVOT_X, PIVOT_Y, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      function drawSingle() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         const ballX = PIVOT_X + length * Math.sin(theta);
         const ballY = PIVOT_Y + length * Math.cos(theta);
 
-        ctx.fillStyle = "#4a4a5c";
-        ctx.beginPath();
-        ctx.arc(PIVOT_X, PIVOT_Y, 6, 0, Math.PI * 2);
-        ctx.fill();
+        drawPivot();
 
         ctx.strokeStyle = "#6c8cff";
         ctx.lineWidth = 2;
@@ -167,34 +287,76 @@
         ctx.lineTo(ballX, ballY);
         ctx.stroke();
 
-        const glow = ctx.createRadialGradient(ballX, ballY, 2, ballX, ballY, BALL_RADIUS * 2.5);
-        glow.addColorStop(0, "rgba(108, 140, 255, 0.45)");
-        glow.addColorStop(1, "rgba(108, 140, 255, 0)");
-        ctx.fillStyle = glow;
-        ctx.beginPath();
-        ctx.arc(ballX, ballY, BALL_RADIUS * 2.5, 0, Math.PI * 2);
-        ctx.fill();
+        drawBall(ballX, ballY, 18, "rgba(108, 140, 255, 0.45)", "#e6e6f0");
+      }
 
-        ctx.fillStyle = "#e6e6f0";
+      function drawDouble() {
+        // 不 clear，保留半透明拖尾（Trail Effect）
+        ctx.fillStyle = "rgba(26, 26, 36, 0.12)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const x1 = PIVOT_X + length * Math.sin(dTheta1);
+        const y1 = PIVOT_Y + length * Math.cos(dTheta1);
+        const x2 = x1 + length * Math.sin(dTheta2);
+        const y2 = y1 + length * Math.cos(dTheta2);
+
+        drawPivot();
+
+        // 第一段摆线
+        ctx.strokeStyle = "#6c8cff";
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(ballX, ballY, BALL_RADIUS, 0, Math.PI * 2);
+        ctx.moveTo(PIVOT_X, PIVOT_Y);
+        ctx.lineTo(x1, y1);
+        ctx.stroke();
+
+        // 第二段摆线
+        ctx.strokeStyle = "#a06cff";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        // 关节 + 第二摆球（彩虹渐变）
+        drawBall(x1, y1, 12, "rgba(108, 140, 255, 0.4)", "#c9d2ff");
+        drawBall(x2, y2, 12, "rgba(255, 120, 180, 0.5)", "#ffb6d0");
+
+        // 第二摆球拖尾轨迹：每帧绘制一个小圆点，颜色随时间彩虹渐变
+        const t = performance.now() / 1000;
+        const hue = (t * 60) % 360;
+        ctx.fillStyle = "hsla(" + hue + ", 90%, 65%, 0.6)";
+        ctx.beginPath();
+        ctx.arc(x2, y2, 3, 0, Math.PI * 2);
         ctx.fill();
       }
 
+      // ===== 动画循环 =====
       let lastTime = performance.now();
 
       function animate(now) {
         const dt = Math.min((now - lastTime) / 1000, 0.05);
         lastTime = now;
 
-        for (let i = 0; i < 4; i++) {
-          step(dt / 4);
+        if (mode === "single") {
+          for (let i = 0; i < 4; i++) singleStep(dt / 4);
+          drawSingle();
+        } else {
+          // 双摆用 RK4，每帧细分若干步保证数值稳定
+          const subSteps = 8;
+          const subDt = dt / subSteps;
+          let y = [dTheta1, dOmega1, dTheta2, dOmega2];
+          for (let i = 0; i < subSteps; i++) {
+            y = rk4Step(y, subDt);
+          }
+          dTheta1 = y[0]; dOmega1 = y[1]; dTheta2 = y[2]; dOmega2 = y[3];
+          drawDouble();
         }
 
-        draw();
         requestAnimationFrame(animate);
       }
 
+      // ===== 参数绑定 =====
       function updateLength() {
         length = parseFloat(lengthInput.value);
         lengthVal.textContent = length + " px";
@@ -212,16 +374,86 @@
       gravityInput.addEventListener("input", updateGravity);
       dampingInput.addEventListener("input", updateDamping);
 
+      // ===== 重置 =====
       function resetAnimation() {
-        theta = INITIAL_ANGLE;
-        omega = 0;
+        if (mode === "single") {
+          theta = INITIAL_ANGLE;
+          omega = 0;
+        } else {
+          dTheta1 = INITIAL_ANGLE; dOmega1 = 0;
+          dTheta2 = INITIAL_ANGLE; dOmega2 = 0;
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
       }
 
       resetBtn.addEventListener("click", resetAnimation);
 
+      // ===== 模式切换 =====
+      function setMode(m) {
+        mode = m;
+        modeSingle.classList.toggle("active", m === "single");
+        modeDouble.classList.toggle("active", m === "double");
+        singleHint.classList.toggle("show", m === "single");
+        doubleHint.classList.toggle("show", m === "double");
+        dampingRow.style.display = (m === "single") ? "flex" : "none";
+        // 切换时清空画面，避免残留拖尾
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        resetAnimation();
+      }
+
+      modeSingle.addEventListener("click", function () { setMode("single"); });
+      modeDouble.addEventListener("click", function () { setMode("double"); });
+
+      // ===== 鼠标拖拽：改变第二摆球初始角度 =====
+      let dragging = false;
+
+      function canvasPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return {
+          x: (clientX - rect.left) * (canvas.width / rect.width),
+          y: (clientY - rect.top) * (canvas.height / rect.height)
+        };
+      }
+
+      function onDragStart(e) {
+        if (mode !== "double") return;
+        dragging = true;
+        e.preventDefault();
+        onDragMove(e);
+      }
+
+      function onDragMove(e) {
+        if (mode !== "double" || !dragging) return;
+        e.preventDefault();
+
+        const p = canvasPos(e);
+        const x1 = PIVOT_X + length * Math.sin(dTheta1);
+        const y1 = PIVOT_Y + length * Math.cos(dTheta1);
+        // 由鼠标位置反推第二摆角
+        const dx = p.x - x1;
+        const dy = p.y - y1;
+        dTheta2 = Math.atan2(dx, dy);
+        dOmega1 = 0; dOmega2 = 0;
+      }
+
+      function onDragEnd(e) {
+        dragging = false;
+      }
+
+      canvas.addEventListener("mousedown", onDragStart);
+      window.addEventListener("mousemove", onDragMove);
+      window.addEventListener("mouseup", onDragEnd);
+      canvas.addEventListener("touchstart", onDragStart, { passive: false });
+      window.addEventListener("touchmove", onDragMove, { passive: false });
+      window.addEventListener("touchend", onDragEnd);
+
+      // ===== 启动 =====
       updateLength();
       updateGravity();
       updateDamping();
+      setMode("single");
       requestAnimationFrame(animate);
     })();
   </script>
