@@ -41,6 +41,51 @@
       box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
       background: var(--bg);
     }
+    .panel {
+      width: 640px;
+      max-width: 100%;
+      margin-top: 20px;
+      background: var(--panel);
+      border-radius: 12px;
+      padding: 18px 20px;
+    }
+    .slider-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .slider-row label {
+      width: 64px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .slider-row input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .slider-row .value {
+      width: 72px;
+      text-align: right;
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+      color: var(--accent);
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      color: #fff;
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+    button:hover { background: #7d9bff; }
+    button:active { transform: scale(0.98); }
   </style>
 </head>
 <body>
@@ -49,21 +94,47 @@
 
   <canvas id="canvas" width="640" height="420"></canvas>
 
+  <div class="panel">
+    <div class="slider-row">
+      <label>摆长 L</label>
+      <input type="range" id="length" min="100" max="350" value="200" step="1">
+      <span class="value" id="lengthVal">200 px</span>
+    </div>
+    <div class="slider-row">
+      <label>重力 g</label>
+      <input type="range" id="gravity" min="1" max="25" value="9.8" step="0.1">
+      <span class="value" id="gravityVal">9.8</span>
+    </div>
+    <div class="slider-row">
+      <label>阻尼 k</label>
+      <input type="range" id="damping" min="0" max="0.010" value="0.001" step="0.0001">
+      <span class="value" id="dampingVal">0.0010</span>
+    </div>
+    <button id="resetBtn">重置摆动</button>
+  </div>
+
   <script>
     (function () {
       "use strict";
 
       const canvas = document.getElementById("canvas");
       const ctx = canvas.getContext("2d");
+      const lengthInput = document.getElementById("length");
+      const gravityInput = document.getElementById("gravity");
+      const dampingInput = document.getElementById("damping");
+      const lengthVal = document.getElementById("lengthVal");
+      const gravityVal = document.getElementById("gravityVal");
+      const dampingVal = document.getElementById("dampingVal");
+      const resetBtn = document.getElementById("resetBtn");
 
       const PIVOT_X = canvas.width / 2;
       const PIVOT_Y = 60;
       const BALL_RADIUS = 18;
       const INITIAL_ANGLE = (45 * Math.PI) / 180;
 
-      const length = 200;    // 摆长（像素）
-      const gravity = 9.8;   // 重力加速度
-      const damping = 0.001; // 空气阻尼系数
+      let length = parseFloat(lengthInput.value);
+      let gravity = parseFloat(gravityInput.value);
+      let damping = parseFloat(dampingInput.value);
 
       let theta = INITIAL_ANGLE;
       let omega = 0;
@@ -124,6 +195,33 @@
         requestAnimationFrame(animate);
       }
 
+      function updateLength() {
+        length = parseFloat(lengthInput.value);
+        lengthVal.textContent = length + " px";
+      }
+      function updateGravity() {
+        gravity = parseFloat(gravityInput.value);
+        gravityVal.textContent = gravity.toFixed(1);
+      }
+      function updateDamping() {
+        damping = parseFloat(dampingInput.value);
+        dampingVal.textContent = damping.toFixed(4);
+      }
+
+      lengthInput.addEventListener("input", updateLength);
+      gravityInput.addEventListener("input", updateGravity);
+      dampingInput.addEventListener("input", updateDamping);
+
+      function resetAnimation() {
+        theta = INITIAL_ANGLE;
+        omega = 0;
+      }
+
+      resetBtn.addEventListener("click", resetAnimation);
+
+      updateLength();
+      updateGravity();
+      updateDamping();
       requestAnimationFrame(animate);
     })();
   </script>
